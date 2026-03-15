@@ -91,6 +91,14 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     const now = new Date().toISOString();
 
+    if (proposal.orchestratorSessionId?.startsWith('starting-')) {
+      return NextResponse.json({
+        proposal,
+        orchestrationId: proposal.orchestratorSessionId,
+        reused: true,
+      });
+    }
+
     if (proposal.orchestratorSessionId && !proposal.orchestratorSessionId.startsWith('starting-')) {
       const runtimeStatus = orchestratorManager.getStatus(proposal.orchestratorSessionId);
       const session = runtimeStatus?.session ?? await orchestratorManager.loadSession(proposal.orchestratorSessionId);
@@ -148,7 +156,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       (current) => ({
         items: (current.items ?? []).map(item => {
           if (item.proposalId !== proposalId) return item;
-          if (item.orchestratorSessionId && !item.orchestratorSessionId.startsWith('starting-')) {
+          if (item.orchestratorSessionId) {
             lockedProposal = item;
             return item;
           }

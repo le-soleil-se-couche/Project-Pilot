@@ -30,6 +30,10 @@ function kindBadgeClass(kind: ArtifactKind): string {
   }
 }
 
+function buildProposalIdempotencyKey(artifact: Artifact): string {
+  return `proposal:${artifact.id}:${artifact.updatedAt}:${artifact.sourceHash ?? 'nohash'}`;
+}
+
 export function ArtifactPanel({ projectKey }: ArtifactPanelProps) {
   const [items, setItems] = useState<Artifact[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,10 +52,35 @@ export function ArtifactPanel({ projectKey }: ArtifactPanelProps) {
   const fetchArtifacts = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/artifacts?project=${encodeURIComponent(projectKey)}`);
-      if (!res.ok) throw new Error('加载 Artifact 失败');
-      const data = await res.json();
-      setItems((data.items ?? []) as Artifact[]);
+      const [artifactRes, proposalRes] = await Promise.all([
+        fetch(`/api/artifacts?project=${encodeURIComponent(projectKey)}`),
+        fetch(`/api/plan-proposals?project=${encodeURIComponent(projectKey)}`),
+      ]);
+
+      if (!artifactRes.ok) throw new Error('加载 Artifact 失败');
+
+      const artifactData = await artifactRes.json().catch(() => ({}));
+      setItems((artifactData.items ?? []) as Artifact[]);
+
+      if (proposalRes.ok) {
+        const proposalData = await proposalRes.json().catch(() => ({}));
+        const latest = (proposalData.latestByArtifact ?? {}) as Record<string, {
+          proposalId: string;
+          status: string;
+          orchestratorSessionId?: string;
+        }>;
+
+        const mapped: Record<string, ProposalRef> = {};
+        for (const [artifactId, proposal] of Object.entries(latest)) {
+          mapped[artifactId] = {
+            proposalId: proposal.proposalId,
+            status: proposal.status,
+            orchestrationId: proposal.orchestratorSessionId,
+          };
+        }
+
+        setProposalByArtifact(mapped);
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '加载 Artifact 失败');
     } finally {
@@ -135,19 +164,24 @@ export function ArtifactPanel({ projectKey }: ArtifactPanelProps) {
     }
   }, [draftContent, draftStatus, draftTitle, editingId, fetchArtifacts, projectKey]);
 
-  const handleGenerateProposal = useCallback(async (artifactId: string) => {
-    setBusyId(artifactId);
+  const handleGenerateProposal = useCallback(async (artifact: Artifact) => {
+    setBusyId(artifact.id);
     try {
+      const idempotencyKey = buildProposalIdempotencyKey(artifact);
       const res = await fetch(
-        `/api/artifacts/${encodeURIComponent(artifactId)}/plan-proposals?project=${encodeURIComponent(projectKey)}`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) },
+        `/api/artifacts/${encodeURIComponent(artifact.id)}/plan-proposals?project=${encodeURIComponent(projectKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ idempotencyKey }),
+        },
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || '生成提案失败');
       const proposal = data.proposal as { proposalId: string; status: string };
       setProposalByArtifact(prev => ({
         ...prev,
-        [artifactId]: {
+        [artifact.id]: {
           proposalId: proposal.proposalId,
           status: proposal.status,
         },
@@ -328,7 +362,7 @@ export function ArtifactPanel({ projectKey }: ArtifactPanelProps) {
                       编辑
                     </button>
                     <button
-                      onClick={() => handleGenerateProposal(item.id)}
+                      onClick={() => handleGenerateProposal(item)}
                       disabled={busyId === item.id}
                       className="rounded border border-zinc-200 px-2 py-1 text-[11px] hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
                     >

@@ -30,7 +30,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   try {
-    const body = await request.json();
+    const body = await request.json().catch(() => ({}));
     const archive = body.archive === true;
     const target = body.target as { sectionId?: string; taskId?: string } | undefined;
     const idempotencyKey = typeof body.idempotencyKey === 'string' ? body.idempotencyKey : undefined;
@@ -41,9 +41,10 @@ export async function POST(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'inbox item not found' }, { status: 404 });
     }
 
+    const existingArtifacts = await readArtifacts(projectKey);
+
     if (item.archivedTo?.artifactId) {
-      const currentArtifacts = await readArtifacts(projectKey);
-      const linked = currentArtifacts.items.find(entry => entry.id === item.archivedTo?.artifactId);
+      const linked = existingArtifacts.items.find(entry => entry.id === item.archivedTo?.artifactId);
       if (linked) {
         return NextResponse.json({
           artifact: linked,
@@ -60,61 +61,61 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     const now = new Date().toISOString();
     let createdOrExisting: Artifact | null = null;
-
-    const artifacts = await modifyJsonFile<ProjectArtifacts>(
-      getArtifactsPath(projectKey),
-      { items: [] },
-      (current) => {
-        const items = current.items ?? [];
-        const existing = items.find(entry =>
-          entry.dedupeKey === dedupeKey
-          || (entry.sourceInboxId === inboxItemId && entry.sourceHash === sourceHash),
-        );
-
-        if (existing) {
-          createdOrExisting = existing;
-          return current;
-        }
-
-        const artifact: Artifact = {
-          id: buildArtifactId(),
-          kind: inference.kind,
-          title: sourceSnapshot.length > 48 ? `${sourceSnapshot.slice(0, 48)}...` : sourceSnapshot,
-          content: sourceSnapshot,
-          status: 'draft',
-          schemaVersion: 1,
-          projectKey,
-          createdAt: now,
-          updatedAt: now,
-          provenance: {
-            sourceType: 'inbox',
-            sourceId: inboxItemId,
-            createdBy: 'ai',
-          },
-          sourceInboxId: inboxItemId,
-          sourceSnapshot,
-          inferenceVersion: ARTIFACT_INFERENCE_VERSION,
-          sourceHash,
-          dedupeKey,
-          sectionId: target?.sectionId,
-          taskId: target?.taskId,
-          gene: inference.kind === 'gene'
-            ? {
-                category: 'pattern',
-                matchRules: {
-                  contextKeywords: inference.signals,
-                  taskPatterns: [],
-                },
-                strategy: sourceSnapshot,
-                usageCount: 0,
-              }
-            : undefined,
-        };
-
-        createdOrExisting = artifact;
-        return { items: [artifact, ...items] };
-      },
+    const deduped = existingArtifacts.items.find(entry =>
+      entry.dedupeKey === dedupeKey
+      || (entry.sourceInboxId === inboxItemId && entry.sourceHash === sourceHash),
     );
+
+    let artifacts = existingArtifacts;
+
+    if (deduped) {
+      createdOrExisting = deduped;
+    } else {
+      artifacts = await modifyJsonFile<ProjectArtifacts>(
+        getArtifactsPath(projectKey),
+        { items: [] },
+        (current) => {
+          const items = current.items ?? [];
+          const artifact: Artifact = {
+            id: buildArtifactId(),
+            kind: inference.kind,
+            title: sourceSnapshot.length > 48 ? `${sourceSnapshot.slice(0, 48)}...` : sourceSnapshot,
+            content: sourceSnapshot,
+            status: 'draft',
+            schemaVersion: 1,
+            projectKey,
+            createdAt: now,
+            updatedAt: now,
+            provenance: {
+              sourceType: 'inbox',
+              sourceId: inboxItemId,
+              createdBy: 'ai',
+            },
+            sourceInboxId: inboxItemId,
+            sourceSnapshot,
+            inferenceVersion: ARTIFACT_INFERENCE_VERSION,
+            sourceHash,
+            dedupeKey,
+            sectionId: target?.sectionId,
+            taskId: target?.taskId,
+            gene: inference.kind === 'gene'
+              ? {
+                  category: 'pattern',
+                  matchRules: {
+                    contextKeywords: inference.signals,
+                    taskPatterns: [],
+                  },
+                  strategy: sourceSnapshot,
+                  usageCount: 0,
+                }
+              : undefined,
+          };
+
+          createdOrExisting = artifact;
+          return { items: [artifact, ...items] };
+        },
+      );
+    }
 
     if (!createdOrExisting) {
       return NextResponse.json({ error: 'failed to create artifact' }, { status: 500 });
