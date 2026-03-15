@@ -589,21 +589,125 @@ export type {
 
 // ==================== Inbox（收件箱） ====================
 
+export type InboxItemStatus =
+  | 'open'
+  | 'inferred'
+  | 'converted'
+  | 'archived'
+  | 'conversion_failed';
+
+export interface InboxArchiveTarget {
+  sectionId?: string;
+  taskId?: string;
+  artifactId?: string;
+}
+
 /** 收件箱条目 —— 未结构化的快速记录 */
 export interface InboxItem {
   id: string;           // 格式: inbox-{timestamp}-{random4}
   content: string;      // 条目内容（一句话）
   createdAt: string;    // ISO timestamp
-  status: 'inbox' | 'archived';  // inbox=待整理, archived=已归档到结构化任务
-  archivedTo?: {        // 归档去向（可选）
-    sectionId: string;
-    taskId: string;
-  };
+  updatedAt?: string;   // ISO timestamp
+  status: InboxItemStatus;
+  source?: 'manual' | 'chat' | 'flow' | 'agent';
+  sourceSessionId?: string;
+  archivedTo?: InboxArchiveTarget;
+  lastError?: string;
+  conversionAttemptAt?: string;
 }
 
 /** 项目收件箱数据 */
 export interface ProjectInbox {
   items: InboxItem[];
+}
+
+// ==================== Artifact（资产化对象） ====================
+
+export type ArtifactKind = 'idea' | 'decision' | 'hypothesis' | 'gene';
+
+export type ArtifactStatus =
+  | 'draft'
+  | 'confirmed'
+  | 'planned'
+  | 'running'
+  | 'done'
+  | 'failed'
+  | 'abandoned';
+
+export interface ArtifactProvenance {
+  sourceType: 'inbox' | 'chat' | 'manual' | 'flow' | 'artifact';
+  sourceId: string;
+  createdBy: 'user' | 'ai';
+  derivedFromArtifactId?: string;
+}
+
+export interface ArtifactGeneData {
+  category: 'repair' | 'optimize' | 'pattern';
+  matchRules: {
+    contextKeywords: string[];
+    taskPatterns: string[];
+  };
+  strategy: string;
+  usageCount: number;
+}
+
+export interface Artifact {
+  id: string;
+  kind: ArtifactKind;
+  title: string;
+  content: string;
+  status: ArtifactStatus;
+  schemaVersion: number;
+  projectKey: string;
+  createdAt: string;
+  updatedAt: string;
+  provenance: ArtifactProvenance;
+  sourceInboxId?: string;
+  sourceSnapshot?: string;
+  inferenceVersion?: string;
+  sourceHash?: string;
+  dedupeKey?: string;
+  sectionId?: string;
+  taskId?: string;
+  gene?: ArtifactGeneData;
+}
+
+export interface ProjectArtifacts {
+  items: Artifact[];
+}
+
+// ==================== Plan Proposal（执行提案） ====================
+
+export type PlanProposalStatus = 'idle' | 'submitted' | 'running' | 'succeeded' | 'failed';
+
+export interface PlanProposal {
+  proposalId: string;
+  artifactId: string;
+  projectKey: string;
+  action: string;
+  goal: string;
+  deliverableHints: string[];
+  sourceContext: {
+    sourceType: 'inbox' | 'chat' | 'manual' | 'flow' | 'artifact';
+    sourceId: string;
+    sourceInboxId?: string;
+    sourceSnapshot?: string;
+    target?: {
+      sectionId?: string;
+      taskId?: string;
+    };
+  };
+  status: PlanProposalStatus;
+  orchestratorSessionId?: string;
+  lastError?: string;
+  idempotencyKey?: string;
+  createdAt: string;
+  updatedAt: string;
+  submittedAt?: string;
+}
+
+export interface ProjectPlanProposals {
+  items: PlanProposal[];
 }
 
 // ==================== Agent Schedules（定时运行） ====================

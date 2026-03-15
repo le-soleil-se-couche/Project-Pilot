@@ -3,11 +3,12 @@
 import { Suspense, useState, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { ChevronDown, ChevronUp, Inbox } from 'lucide-react';
+import { ChevronDown, ChevronUp, Inbox, Boxes } from 'lucide-react';
 import { FlowEditor } from '@/components/flow-editor';
 import type { HighlightTarget } from '@/components/flow-editor';
 import { useProject } from '@/components/project-context';
 import { ProjectInbox } from '@/components/project-inbox';
+import { ArtifactPanel } from '@/components/artifact-panel';
 
 function ProjectsPageInner() {
   const { projects, activeKey, setActiveKey, fetchProjects } = useProject();
@@ -15,6 +16,7 @@ function ProjectsPageInner() {
   const searchParams = useSearchParams();
   const t = useTranslations('flows');
   const [inboxOpen, setInboxOpen] = useState(true);
+  const [artifactOpen, setArtifactOpen] = useState(true);
 
   // Build highlight target from URL params (when navigating back from task agent)
   const highlight = useMemo<HighlightTarget | null>(() => {
@@ -68,6 +70,24 @@ function ProjectsPageInner() {
         {inboxOpen && (
           <div className="mb-2 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
             <ProjectInbox projectKey={activeProject.key} />
+          </div>
+        )}
+
+        <button
+          onClick={() => setArtifactOpen(v => !v)}
+          className="mb-2 flex items-center gap-1.5 text-sm font-medium text-zinc-500 transition-colors hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+        >
+          <Boxes className="h-4 w-4" />
+          <span>Artifacts</span>
+          {artifactOpen ? (
+            <ChevronUp className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5" />
+          )}
+        </button>
+        {artifactOpen && (
+          <div className="mb-2 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+            <ArtifactPanel projectKey={activeProject.key} />
           </div>
         )}
       </div>

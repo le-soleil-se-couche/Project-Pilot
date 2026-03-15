@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, type KeyboardEvent } from 'react';
-import { Plus, X, Check, Inbox } from 'lucide-react';
+import { Plus, X, Check, Inbox, Zap } from 'lucide-react';
 import type { InboxItem } from '@/types';
 
 interface ProjectInboxProps {
@@ -14,6 +14,8 @@ export function ProjectInbox({ projectKey }: ProjectInboxProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState('');
   const [loading, setLoading] = useState(true);
+  const [convertingId, setConvertingId] = useState<string | null>(null);
+  const [convertHint, setConvertHint] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const editRef = useRef<HTMLInputElement>(null);
 
@@ -27,7 +29,7 @@ export function ProjectInbox({ projectKey }: ProjectInboxProps) {
       // Only show non-archived, sorted by createdAt descending
       setItems(
         allItems
-          .filter((i) => i.status === 'inbox')
+          .filter((i) => i.status === 'open' || i.status === 'conversion_failed')
           .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       );
     } catch {
@@ -54,7 +56,9 @@ export function ProjectInbox({ projectKey }: ProjectInboxProps) {
       id: tempId,
       content,
       createdAt: new Date().toISOString(),
-      status: 'inbox',
+      updatedAt: new Date().toISOString(),
+      status: 'open',
+      source: 'manual',
     };
     setItems((prev) => [tempItem, ...prev]);
 
@@ -88,6 +92,43 @@ export function ProjectInbox({ projectKey }: ProjectInboxProps) {
         });
       } catch {
         await fetchItems(); // revert
+      }
+    },
+    [projectKey, fetchItems]
+  );
+
+  // Convert item to artifact
+  const handleConvert = useCallback(
+    async (id: string) => {
+      setConvertingId(id);
+      try {
+        const res = await fetch(
+          `/api/inbox/${encodeURIComponent(id)}/convert-to-artifact?project=${encodeURIComponent(projectKey)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ archive: false }),
+          }
+        );
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || '转化失败');
+        }
+
+        const artifactKind = data?.artifact?.kind ?? 'artifact';
+        const artifactTitle = data?.artifact?.title ?? '';
+        const top1 = data?.recommendation?.top1;
+        const tip = top1
+          ? `已转为 ${artifactKind}: ${artifactTitle}；推荐基因: ${top1.title}`
+          : `已转为 ${artifactKind}: ${artifactTitle}`;
+        setConvertHint(tip);
+        setItems((prev) => prev.filter((i) => i.id !== id));
+        window.dispatchEvent(new CustomEvent('pp:artifacts-changed', { detail: { projectKey } }));
+      } catch (error) {
+        setConvertHint(error instanceof Error ? `转化失败: ${error.message}` : '转化失败');
+        await fetchItems();
+      } finally {
+        setConvertingId(null);
       }
     },
     [projectKey, fetchItems]
@@ -204,6 +245,11 @@ export function ProjectInbox({ projectKey }: ProjectInboxProps) {
         </div>
       ) : (
         <div className="mt-1 max-h-64 overflow-y-auto">
+          {convertHint && (
+            <div className="mb-2 rounded border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-300">
+              {convertHint}
+            </div>
+          )}
           {items.map((item) => (
             <div
               key={item.id}
@@ -225,12 +271,20 @@ export function ProjectInbox({ projectKey }: ProjectInboxProps) {
                   onClick={() => startEditing(item)}
                   title={item.content}
                 >
-                  {item.content}
+                  {item.status === 'conversion_failed' ? `[转换失败] ${item.content}` : item.content}
                 </span>
               )}
 
               {/* Action buttons — visible on hover */}
               <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                <button
+                  onClick={() => handleConvert(item.id)}
+                  disabled={convertingId === item.id}
+                  title="转化为 Artifact"
+                  className="flex h-5 w-5 items-center justify-center rounded text-amber-500/80 transition-colors hover:bg-amber-50 hover:text-amber-600 disabled:opacity-40 dark:hover:bg-amber-900/30"
+                >
+                  <Zap className="h-3.5 w-3.5" />
+                </button>
                 <button
                   onClick={() => handleArchive(item.id)}
                   title="归档"

@@ -11,6 +11,14 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
+import type {
+  InboxItemStatus,
+  ProjectInbox,
+  ArtifactStatus,
+  ProjectArtifacts,
+  PlanProposalStatus,
+  ProjectPlanProposals,
+} from '@/types';
 
 /**
  * Strip UTF-8 BOM (byte order mark) and parse JSON.
@@ -412,10 +420,16 @@ const MAX_SNAPSHOTS = 10;
 
 /** 需要做写入前快照的文件（basename） */
 const SNAPSHOT_TARGETS = new Set(['agents.json', 'agent-chat-sessions.json']);
+const SNAPSHOT_TARGET_SUFFIXES = ['_inbox.json', '_artifacts.json', '_plan-proposals.json'];
+
+function shouldSnapshot(baseName: string): boolean {
+  if (SNAPSHOT_TARGETS.has(baseName)) return true;
+  return SNAPSHOT_TARGET_SUFFIXES.some(suffix => baseName.endsWith(suffix));
+}
 
 function snapshotBeforeWrite(filePath: string): void {
   const baseName = path.basename(filePath);
-  if (!SNAPSHOT_TARGETS.has(baseName)) return;
+  if (!shouldSnapshot(baseName)) return;
 
   // Fire-and-forget：快照在后台执行，不阻塞写入路径
   void (async () => {
@@ -644,14 +658,101 @@ export function getInboxPath(projectKey: string): string {
   return path.join(DATA_DIR, 'flows', `${safe}_inbox.json`);
 }
 
+export function getArtifactsPath(projectKey: string): string {
+  const safe = projectKey.replace(/[^a-zA-Z0-9_-]/g, '');
+
+  if (!safe || safe.length < 1 || safe.length > 100) {
+    throw new Error(`Invalid project key: ${projectKey}`);
+  }
+
+  return path.join(DATA_DIR, 'flows', `${safe}_artifacts.json`);
+}
+
+export function getPlanProposalsPath(projectKey: string): string {
+  const safe = projectKey.replace(/[^a-zA-Z0-9_-]/g, '');
+
+  if (!safe || safe.length < 1 || safe.length > 100) {
+    throw new Error(`Invalid project key: ${projectKey}`);
+  }
+
+  return path.join(DATA_DIR, 'flows', `${safe}_plan-proposals.json`);
+}
+
+function normalizeInboxStatus(status: string | undefined): InboxItemStatus {
+  if (status === 'inbox') return 'open';
+  if (status === 'open' || status === 'inferred' || status === 'converted' || status === 'archived' || status === 'conversion_failed') {
+    return status;
+  }
+  return 'open';
+}
+
+function normalizeArtifactStatus(status: string | undefined): ArtifactStatus {
+  if (status === 'draft' || status === 'confirmed' || status === 'planned' || status === 'running' || status === 'done' || status === 'failed' || status === 'abandoned') {
+    return status;
+  }
+  return 'draft';
+}
+
+function normalizePlanProposalStatus(status: string | undefined): PlanProposalStatus {
+  if (status === 'idle' || status === 'submitted' || status === 'running' || status === 'succeeded' || status === 'failed') {
+    return status;
+  }
+  return 'idle';
+}
+
 /** 读取项目收件箱数据，不存在时返回空列表 */
-export async function readInbox(projectKey: string): Promise<import('@/types').ProjectInbox> {
-  return readJsonFile<import('@/types').ProjectInbox>(getInboxPath(projectKey), { items: [] });
+export async function readInbox(projectKey: string): Promise<ProjectInbox> {
+  const raw = await readJsonFile<ProjectInbox>(getInboxPath(projectKey), { items: [] });
+  return {
+    items: (raw.items ?? []).map(item => {
+      const now = item.updatedAt ?? item.createdAt ?? new Date().toISOString();
+      return {
+        ...item,
+        status: normalizeInboxStatus((item as { status?: string }).status),
+        updatedAt: now,
+      };
+    }),
+  };
 }
 
 /** 写入项目收件箱数据（原子写入） */
-export async function writeInbox(projectKey: string, data: import('@/types').ProjectInbox): Promise<void> {
+export async function writeInbox(projectKey: string, data: ProjectInbox): Promise<void> {
   await writeJsonFile(getInboxPath(projectKey), data);
+}
+
+/** 读取项目 Artifact 列表，不存在时返回空列表 */
+export async function readArtifacts(projectKey: string): Promise<ProjectArtifacts> {
+  const raw = await readJsonFile<ProjectArtifacts>(getArtifactsPath(projectKey), { items: [] });
+  return {
+    items: (raw.items ?? []).map(item => ({
+      ...item,
+      status: normalizeArtifactStatus((item as { status?: string }).status),
+      schemaVersion: item.schemaVersion ?? 1,
+      updatedAt: item.updatedAt ?? item.createdAt ?? new Date().toISOString(),
+    })),
+  };
+}
+
+/** 写入项目 Artifact 列表（原子写入） */
+export async function writeArtifacts(projectKey: string, data: ProjectArtifacts): Promise<void> {
+  await writeJsonFile(getArtifactsPath(projectKey), data);
+}
+
+/** 读取项目 PlanProposal 列表，不存在时返回空列表 */
+export async function readPlanProposals(projectKey: string): Promise<ProjectPlanProposals> {
+  const raw = await readJsonFile<ProjectPlanProposals>(getPlanProposalsPath(projectKey), { items: [] });
+  return {
+    items: (raw.items ?? []).map(item => ({
+      ...item,
+      status: normalizePlanProposalStatus((item as { status?: string }).status),
+      updatedAt: item.updatedAt ?? item.createdAt ?? new Date().toISOString(),
+    })),
+  };
+}
+
+/** 写入项目 PlanProposal 列表（原子写入） */
+export async function writePlanProposals(projectKey: string, data: ProjectPlanProposals): Promise<void> {
+  await writeJsonFile(getPlanProposalsPath(projectKey), data);
 }
 
 // ── Agent Schedules 路径函数 ──
