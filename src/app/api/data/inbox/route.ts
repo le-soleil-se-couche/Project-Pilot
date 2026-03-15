@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readInbox, writeInbox } from '@/lib/file-store';
-import type { InboxItem, ProjectInbox } from '@/types';
+import type { InboxItem, InboxItemStatus } from '@/types';
 
 /** Sanitize project key — only allow safe characters */
 function sanitizeKey(raw: string): string {
@@ -18,6 +18,14 @@ function getProjectKey(request: NextRequest): string | null {
 /** Generate inbox item ID: inbox-{timestamp}-{random4} */
 function generateInboxId(): string {
   return `inbox-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function normalizeInboxStatus(status: unknown): InboxItemStatus | null {
+  if (status === 'inbox') return 'open';
+  if (status === 'open' || status === 'inferred' || status === 'converted' || status === 'archived' || status === 'conversion_failed') {
+    return status;
+  }
+  return null;
 }
 
 /**
@@ -55,7 +63,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { content } = body;
+    const { content, source, sourceSessionId } = body;
     if (!content || typeof content !== 'string') {
       return NextResponse.json({ error: 'content is required and must be a string' }, { status: 400 });
     }
@@ -65,7 +73,10 @@ export async function POST(request: NextRequest) {
       id: generateInboxId(),
       content: content.trim(),
       createdAt: now,
-      status: 'inbox',
+      updatedAt: now,
+      status: 'open',
+      source: source === 'chat' || source === 'flow' || source === 'agent' ? source : 'manual',
+      sourceSessionId: typeof sourceSessionId === 'string' ? sourceSessionId : undefined,
     };
 
     const inbox = await readInbox(projectKey);
@@ -84,7 +95,7 @@ export async function POST(request: NextRequest) {
 
 /**
  * PATCH /api/data/inbox?project={key}
- * Body: { id: string, content?: string, status?: 'inbox' | 'archived', archivedTo?: { sectionId, taskId } }
+ * Body: { id: string, content?: string, status?: InboxItemStatus, archivedTo?: { sectionId?, taskId?, artifactId? } }
  * 更新指定 item
  */
 export async function PATCH(request: NextRequest) {
@@ -95,7 +106,7 @@ export async function PATCH(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { id, content, status, archivedTo } = body;
+    const { id, content, status, archivedTo, lastError, conversionAttemptAt } = body;
     if (!id || typeof id !== 'string') {
       return NextResponse.json({ error: 'id is required' }, { status: 400 });
     }
@@ -106,9 +117,20 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'item not found' }, { status: 404 });
     }
 
-    if (content !== undefined) item.content = content;
-    if (status !== undefined) item.status = status;
+    if (content !== undefined) item.content = String(content);
+    if (status !== undefined) {
+      const normalizedStatus = normalizeInboxStatus(status);
+      if (!normalizedStatus) {
+        return NextResponse.json({ error: 'invalid status' }, { status: 400 });
+      }
+      item.status = normalizedStatus;
+    }
     if (archivedTo !== undefined) item.archivedTo = archivedTo;
+    if (lastError !== undefined) item.lastError = typeof lastError === 'string' ? lastError : undefined;
+    if (conversionAttemptAt !== undefined) {
+      item.conversionAttemptAt = typeof conversionAttemptAt === 'string' ? conversionAttemptAt : undefined;
+    }
+    item.updatedAt = new Date().toISOString();
 
     await writeInbox(projectKey, inbox);
     return NextResponse.json(item);

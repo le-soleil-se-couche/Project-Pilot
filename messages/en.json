@@ -157,6 +157,7 @@
     "completed": "Completed ({count})",
     "inProgress": "In Progress ({count})",
     "planned": "Planned ({count})",
+    "addTopItem": "Add item",
     "addItem": "Add item...",
     "addSubItem": "Add sub-item...",
     "addDescription": "Add Description",
